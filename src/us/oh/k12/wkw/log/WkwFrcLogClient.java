@@ -12,16 +12,18 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Scanner;
 
-import edu.wpi.first.wpilibj.networking.NetworkTable;
+import edu.wpi.first.wpilibj.networktables.NetworkTableProvider;
+import edu.wpi.first.wpilibj.networktables2.client.NetworkTableClient;
+import edu.wpi.first.wpilibj.networktables2.stream.IOStreamFactory;
+import edu.wpi.first.wpilibj.networktables2.stream.SocketStreams;
 
 /**
- * Class that receives UDP broadcast datagrams (log records).<br>
+ * Class that receives NetworkTable data (log records).<br>
  * The jar is packaged as runnable, so the normal command is:<br>
  * java -jar ./WfwFrcLogClient.jar<br>
  * <br>
  * To run with (optional) arguments:<br>
  * -p portnumber (default 6595)<br>
- * -i ipmulticastaddress (default 224.41.45.254)<br>
  * -p logfilepath (default /tmp/)<br>
  * 
  * @author Dave Truby dave@truby.name
@@ -30,26 +32,30 @@ import edu.wpi.first.wpilibj.networking.NetworkTable;
  */
 public class WkwFrcLogClient {
 
-	private static final String VERSION = "1.0.0";
+	private static final String VERSION = "3.0.0";
 
 	private static final int PORT = 6595;
-	// multicast ip address are from 224.0.0.0 to 239.255.255.255 inclusive.
-	// private static final String IPGROUP = "224.41.45.254";
 	private static final int BUFFER_SIZE = 1024;
 
 	private static final String ARG_PORT = "-p";
-	// private static final String ARG_IP_ADDRESS = "-i";
+	private static final String ARG_TEAMNUMBER = "-t";
+	private static final String ARG_IPADDRESS = "-i";
 	private static final String ARG_BUFFER_SIZE = "-b";
 	private static final String ARG_LOG_FILE_PATH = "-p";
 	private static final String ARG_NETWORKTABLE_LISTENER = "-n";
 	private static final String ARG_SOCKET_LISTENER = "-s";
 	private static final String ARG_HELP = "-h";
+	public static final int SERVER_PORT = 1735;
+	private static final String NETWORK_TABLE_NAME_LOGGER = "WkwFrcLogger";
 
+	private IOStreamFactory streamFactory = null;
+	private NetworkTableClient networkTableClient = null;
+	private NetworkTableProvider networkTableProvider = null;
+	private String ipAddress = null;
 	private boolean networkTableListener = true;
 	private boolean socketListener = false;
 	private boolean running = false;
 	private int port = WkwFrcLogClient.PORT;
-	// private String ipMulticastAddress = WkwFrcLogClient.IPGROUP;
 	private int bufferSize = WkwFrcLogClient.BUFFER_SIZE;
 	private String logFilePath = "";
 	private int teamNumber = 4145;
@@ -69,12 +75,17 @@ public class WkwFrcLogClient {
 
 		if (this.networkTableListener) {
 
-			this.startListening();
+			try {
 
-			this.waitOnConsoleInput();
+				this.startListening();
 
-			this.stopListening();
+				this.waitOnConsoleInput();
 
+			} finally {
+
+				this.stopListening();
+
+			}
 		}
 
 		if (this.socketListener) {
@@ -91,7 +102,7 @@ public class WkwFrcLogClient {
 
 	private void waitOnConsoleInput() {
 
-		System.err.println("Enter command:");
+		System.err.println("Any key to exit:");
 
 		final Scanner anInput = new Scanner(System.in);
 
@@ -104,23 +115,107 @@ public class WkwFrcLogClient {
 
 	private void startListening() {
 
-		NetworkTable.setTeam(this.teamNumber);
+		final String anIpAddress = this.setupIpAddress(this.teamNumber,
+				this.ipAddress);
 
-		this.loggerListener = new FrcLoggerListener(null, this.teamNumber);
+		System.err.println("Using robot ip address=" + anIpAddress + ".");
 
-		Robot.getLogger().addListenerToAll(this.loggerListener);
-		Robot.getLogger().addAdditionListener(this.loggerListener, true);
-		Robot.getLogger().removeAdditionListener(this.loggerListener);
+		try {
 
+			this.streamFactory = SocketStreams.newStreamFactory(anIpAddress,
+					WkwFrcLogClient.SERVER_PORT);
+
+			this.networkTableClient = new NetworkTableClient(this.streamFactory);
+
+			this.networkTableProvider = new NetworkTableProvider(
+					this.networkTableClient);
+
+			// NetworkTable.setTeam(this.teamNumber);
+
+			this.loggerListener = new FrcLoggerListener(this.teamNumber);
+
+			this.networkTableProvider.getTable(
+					WkwFrcLogClient.NETWORK_TABLE_NAME_LOGGER)
+					.addTableListener(this.loggerListener);
+
+			// this.networkTableClient.addTableListener(this.loggerListener,
+			// false);
+			// Robot.getLogger().addListenerToAll(this.loggerListener);
+			// Robot.getLogger().addTableListener(this.loggerListener);
+			// Robot.getLogger().addAdditionListener(this.loggerListener, true);
+			// Robot.getLogger().removeAdditionListener(this.loggerListener);
+
+		} catch (IOException anIoEx) {
+			System.err.println("Caught IOException message="
+					+ anIoEx.getMessage() + ".");
+		}
 	}
 
 	private void stopListening() {
 
-		Robot.getLogger().removeAdditionListener(this.loggerListener);
-		Robot.getLogger().removeListenerFromAll(this.loggerListener);
+		if (null != this.networkTableClient) {
 
-		this.loggerListener = null;
+			if (null != this.networkTableProvider) {
 
+				this.networkTableProvider.getTable(
+						WkwFrcLogClient.NETWORK_TABLE_NAME_LOGGER)
+						.removeTableListener(this.loggerListener);
+
+				// Robot.getLogger().removeTableListener(this.loggerListener);
+				// Robot.getLogger().removeAdditionListener(this.loggerListener);
+				// Robot.getLogger().removeListenerFromAll(this.loggerListener);
+
+				this.networkTableProvider.close();
+				this.networkTableProvider = null;
+			}
+
+			this.networkTableClient.close();
+
+			this.networkTableClient.stop();
+			this.networkTableClient = null;
+
+			this.streamFactory = null;
+
+			this.loggerListener = null;
+		}
+	}
+
+	private String setupIpAddress(int pTeamNumber, String pIpAddress) {
+		String anIpAddress = null;
+
+		if (this.isNotNullAndNotBlank(pIpAddress)) {
+
+			anIpAddress = pIpAddress;
+
+		} else {
+
+			anIpAddress = this.getIpFromTeam(pTeamNumber);
+
+		}
+
+		return anIpAddress;
+	}
+
+	private String getIpFromTeam(int pTeam) {
+		// add zeros if number isn't 4 digits
+		String numString = String.valueOf(pTeam);
+		int numDigits = numString.length();
+		int zToAdd = 4 - numDigits;
+		if (zToAdd > 0) {
+			// team number is less than 4 digits long
+			String zeros = "";
+			for (int i = 0; i < zToAdd; i++) {
+				zeros += "0";
+			}
+			numString = zeros + numString;
+		}
+		// convert the team number into ip
+		return "10." + numString.substring(0, 1) + "."
+				+ numString.substring(2, 3) + ".2";
+	}
+
+	private boolean isNotNullAndNotBlank(final String pValue) {
+		return ((null != pValue) && (pValue.length() > 0));
 	}
 
 	/**
@@ -141,12 +236,14 @@ public class WkwFrcLogClient {
 					+ aLocalIpAddress.getHostAddress() + ".");
 
 			// setup the broadcast group
-			// final InetAddress aBroadcastGroup = InetAddress.getByName(this.ipMulticastAddress);
+			// final InetAddress aBroadcastGroup =
+			// InetAddress.getByName(this.ipMulticastAddress);
 			// join the group
 			// aSocket.joinGroup(aBroadcastGroup);
 
-			System.err.println("WkwFrcLogClient version " + WkwFrcLogClient.VERSION
-					+ " is listening on IP port " + Integer.toString(this.port)
+			System.err.println("WkwFrcLogClient version "
+					+ WkwFrcLogClient.VERSION + " is listening on IP port "
+					+ Integer.toString(this.port)
 					/*+ " for broadcast group " + aBroadcastGroup.getHostAddress() */
 					+ ". Press ctrl-c to exit.");
 
@@ -163,7 +260,8 @@ public class WkwFrcLogClient {
 				// System.err.println("Incomming socket ip="
 				// + aClientSocket.getRemoteSocketAddress().toString() + ".");
 
-				new WkwFrcSocketHandlerThread(this.bufferSize, aClientSocket).start();
+				new WkwFrcSocketHandlerThread(this.bufferSize, aClientSocket)
+						.start();
 
 				/*
 				while (this.running) {
@@ -185,14 +283,16 @@ public class WkwFrcLogClient {
 
 		} catch (IOException anIoEx) {
 
-			System.err.println("WkwFrcLogClient main loop caught IOException with message="
-					+ anIoEx.getMessage() + ", exiting.");
+			System.err
+					.println("WkwFrcLogClient main loop caught IOException with message="
+							+ anIoEx.getMessage() + ", exiting.");
 			anIoEx.printStackTrace(System.err);
 
 		} catch (Exception anEx) {
 
-			System.err.println("WkwFrcLogClient main loop caught " + anEx.getClass().getName()
-					+ " with message=" + anEx.getMessage() + ", exiting.");
+			System.err.println("WkwFrcLogClient main loop caught "
+					+ anEx.getClass().getName() + " with message="
+					+ anEx.getMessage() + ", exiting.");
 			anEx.printStackTrace(System.err);
 
 		} finally {
@@ -215,9 +315,10 @@ public class WkwFrcLogClient {
 		// setup default values.
 
 		this.port = WkwFrcLogClient.PORT;
-		// this.ipMulticastAddress = WkwFrcLogClient.IPGROUP;
 		this.bufferSize = WkwFrcLogClient.BUFFER_SIZE;
 		this.logFilePath = PacketHandlerThread.LOG_FILE_PATH;
+		this.networkTableListener = true;
+		this.socketListener = false;
 
 		if (null != pArgs) {
 
@@ -247,18 +348,36 @@ public class WkwFrcLogClient {
 						}
 					}
 
-					/*
-					} else if (WkwFrcLogClient.ARG_IP_ADDRESS.equalsIgnoreCase(pArgs[idx])) {
-
-					// ip address/group argument, get the next arg as the value.
+				} else if (WkwFrcLogClient.ARG_TEAMNUMBER
+						.equalsIgnoreCase(pArgs[idx])) {
 
 					if (pArgs.length > idx) {
 
-						this.ipMulticastAddress = pArgs[++idx];
+						final String aTeamNumber = pArgs[++idx];
+
+						try {
+
+							// convert the string to an int
+
+							this.teamNumber = Integer.parseInt(aTeamNumber);
+
+						} catch (NumberFormatException aNfEx) {
+							System.err.println("WkwFrcLogClient team number '"
+									+ aTeamNumber + "' is not a number.");
+						}
+					}
+
+				} else if (WkwFrcLogClient.ARG_IPADDRESS
+						.equalsIgnoreCase(pArgs[idx])) {
+
+					if (pArgs.length > idx) {
+
+						this.ipAddress = pArgs[++idx];
 
 					}
-					*/
-				} else if (WkwFrcLogClient.ARG_LOG_FILE_PATH.equalsIgnoreCase(pArgs[idx])) {
+
+				} else if (WkwFrcLogClient.ARG_LOG_FILE_PATH
+						.equalsIgnoreCase(pArgs[idx])) {
 
 					// log file path argument, get the next arg as the value.
 
@@ -268,7 +387,8 @@ public class WkwFrcLogClient {
 
 					}
 
-				} else if (WkwFrcLogClient.ARG_BUFFER_SIZE.equalsIgnoreCase(pArgs[idx])) {
+				} else if (WkwFrcLogClient.ARG_BUFFER_SIZE
+						.equalsIgnoreCase(pArgs[idx])) {
 
 					// buffer size argument, get the next arg as the value.
 
@@ -283,21 +403,24 @@ public class WkwFrcLogClient {
 							this.bufferSize = Integer.parseInt(aBufferSize);
 
 						} catch (NumberFormatException aNfEx) {
-							System.err.println("WkwFrcLogClient buffer size '" + aBufferSize
-									+ "' is not a number.");
+							System.err.println("WkwFrcLogClient buffer size '"
+									+ aBufferSize + "' is not a number.");
 						}
 
 					}
 
-				} else if (WkwFrcLogClient.ARG_NETWORKTABLE_LISTENER.equalsIgnoreCase(pArgs[idx])) {
+				} else if (WkwFrcLogClient.ARG_NETWORKTABLE_LISTENER
+						.equalsIgnoreCase(pArgs[idx])) {
 
 					this.networkTableListener = true;
 
-				} else if (WkwFrcLogClient.ARG_SOCKET_LISTENER.equalsIgnoreCase(pArgs[idx])) {
+				} else if (WkwFrcLogClient.ARG_SOCKET_LISTENER
+						.equalsIgnoreCase(pArgs[idx])) {
 
 					this.socketListener = true;
 
-				} else if (WkwFrcLogClient.ARG_HELP.equalsIgnoreCase(pArgs[idx])) {
+				} else if (WkwFrcLogClient.ARG_HELP
+						.equalsIgnoreCase(pArgs[idx])) {
 
 					// help argument, print out help.
 
@@ -320,8 +443,9 @@ public class WkwFrcLogClient {
 		System.out.println(" -h is this help.");
 		System.out.println(" -n use networktable listener.");
 		System.out.println(" -s use socket listener.");
-		System.out.println(" -p is the port number to listen on. The default is "
-				+ Integer.toString(WkwFrcLogClient.PORT) + ".");
+		System.out
+				.println(" -p is the port number to listen on. The default is "
+						+ Integer.toString(WkwFrcLogClient.PORT) + ".");
 		// System.out.println(" -i is the ip multicast address to join. The default is "
 		// + WkwFrcLogClient.IPGROUP + ".");
 		System.out

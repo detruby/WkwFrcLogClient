@@ -1,5 +1,5 @@
 /*----------------------------------------------------------------------------*/
-/* Copyright (c) 2012 Worthington Kilbourne Robot Club. All Rights Reserved. */
+/* Copyright (c) 2013 Worthington Robot Club. All Rights Reserved. */
 /* Open Source Software - may be modified and shared by FRC teams. The code */
 /* must be accompanied by the FIRST BSD license file in the root directory of */
 /* the project. */
@@ -9,19 +9,19 @@ package us.oh.k12.wkw.log;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
-import edu.wpi.first.wpilibj.networking.NetworkAdditionListener;
-import edu.wpi.first.wpilibj.networking.NetworkListener;
+import edu.wpi.first.wpilibj.tables.ITable;
+import edu.wpi.first.wpilibj.tables.ITableListener;
 
 /**
- * 
+ * @author Dave Truby dave@truby.name
+ * @version 1.0.0
+ * @since 1.0.0
  */
-public class FrcLoggerListener implements NetworkListener, NetworkAdditionListener {
+public class FrcLoggerListener implements ITableListener {
 
 	private static final String NETWORK_TABLE_FIELD_NAME = "log";
 
-	// private Object /*ContentResolver*/contentResolver;
 	private int teamNumber = 0;
-	// private Date time;
 	private String level;
 	private String clazz;
 	private String method;
@@ -34,9 +34,9 @@ public class FrcLoggerListener implements NetworkListener, NetworkAdditionListen
 		super();
 	}
 
-	public FrcLoggerListener(final Object pContentResolver, final int pTeamNumber) {
+	public FrcLoggerListener(final int pTeamNumber) {
 		super();
-		// this.contentResolver = pContentResolver;
+
 		this.teamNumber = pTeamNumber;
 	}
 
@@ -44,11 +44,11 @@ public class FrcLoggerListener implements NetworkListener, NetworkAdditionListen
 		super();
 
 		if ((null == pTokenArray) || (pTokenArray.length < 5)) {
-			throw new IllegalArgumentException("pTokenArray is null or less columns");
+			throw new IllegalArgumentException(
+					"pTokenArray is null or less columns");
 		}
 
 		this.teamNumber = pTeamNumber;
-		// this.time = new Date(); // pTokenArray[0].replaceAll("[\\\"]", "");
 		this.level = pTokenArray[1].replaceAll("[\\\"]", "");
 		this.clazz = pTokenArray[2].replaceAll("[\\\"]", "");
 		this.method = pTokenArray[3].replaceAll("[\\\"]", "");
@@ -56,28 +56,69 @@ public class FrcLoggerListener implements NetworkListener, NetworkAdditionListen
 	}
 
 	public void log() {
-		System.out.println(this.formatNow() + "," + this.level + "," + this.clazz + ","
-				+ this.method + "," + this.message);
+		System.out.println(this.formatNow() + "," + this.level + ","
+				+ this.clazz + "," + this.method + "," + this.message);
 	}
 
 	private String formatNow() {
-		final SimpleDateFormat aFormat = new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss.sss");
+		final SimpleDateFormat aFormat = new SimpleDateFormat(
+				"yyyy/MM/dd_HH:mm:ss.sss");
 		return aFormat.format(new Date());
 	}
 
-	/*
-	private void create(final ContentResolver pContentResolver) {
-		if (null != pContentResolver) {
+	@Override
+	public void valueChanged(final ITable pTable, final String pKey,
+			final Object pValue, final boolean pIsNew) {
 
-			final FrcActivity aFrcActivity = new FrcActivity(this.teamNumber, this.clazz,
-					this.level + " " + this.method + " " + this.message);
+		try {
 
-			aFrcActivity.create(pContentResolver);
+			if ((null != pKey)
+					&& (FrcLoggerListener.NETWORK_TABLE_FIELD_NAME.equals(pKey))
+					&& (null != pValue)) {
 
+				if (pValue instanceof String) {
+
+					String aValue = (String) pValue;
+
+					new FrcLoggerListener(this.teamNumber, aValue.split("[,]",
+							5)).log();
+
+				} else {
+					this.debug("valueChanged()", pValue.getClass().getName()
+							+ "=" + pValue.toString());
+				}
+			}
+
+		} catch (Exception anEx) {
+			this.error("valueChanged()", anEx);
 		}
 	}
-	*/
 
+	protected void debug(final String pMethod, final String pMessage) {
+		System.err
+				.println(this.getClassName() + " " + pMethod + " " + pMessage);
+	}
+
+	private void error(final String pMethod, final Exception anEx) {
+		this.error(pMethod, "Caught " + anEx.getClass().getName()
+				+ ", with message=" + anEx.getMessage() + ".", anEx);
+	}
+
+	private void error(final String pMethod, final String pMessage,
+			final Exception anEx) {
+		System.err
+				.println(this.getClassName() + " " + pMethod + " " + pMessage);
+		if (null != anEx) {
+			anEx.printStackTrace();
+		}
+	}
+
+	private String getClassName() {
+		final String aClassName = this.getClass().getName();
+		return aClassName.substring(aClassName.lastIndexOf('.') + 1);
+	}
+
+	/*
 	@Override
 	public void fieldAdded(final String pName, final Object pValue) {
 
@@ -89,28 +130,31 @@ public class FrcLoggerListener implements NetworkListener, NetworkAdditionListen
 			this.error("fieldAdded()", anEx);
 		}
 	}
+	*/
 
+	/*
 	@Override
 	public void valueChanged(final String pName, final Object pValue) {
 
 		try {
 
-			if ((null != pName) && (FrcLoggerListener.NETWORK_TABLE_FIELD_NAME.equals(pName))
-					&& (null != pValue)) {
+			if ((null != pName)
+					&& (FrcLoggerListener.NETWORK_TABLE_FIELD_NAME
+							.equals(pName)) && (null != pValue)) {
 
 				if (pValue instanceof String) {
 
 					String aValue = (String) pValue;
 
-					final FrcLoggerListener aLogRecord = new FrcLoggerListener(this.teamNumber,
-							aValue.split("[,]", 5));
+					final FrcLoggerListener aLogRecord = new FrcLoggerListener(
+							this.teamNumber, aValue.split("[,]", 5));
 
 					aLogRecord.log();
 					// aLogRecord.create(this.contentResolver);
 
 				} else {
-					this.debug("valueChanged()",
-							pValue.getClass().getName() + "=" + pValue.toString());
+					this.debug("valueChanged()", pValue.getClass().getName()
+							+ "=" + pValue.toString());
 				}
 			}
 
@@ -118,7 +162,8 @@ public class FrcLoggerListener implements NetworkListener, NetworkAdditionListen
 			this.error("valueChanged()", anEx);
 		}
 	}
-
+	*/
+	/*
 	@Override
 	public void valueConfirmed(final String pName, final Object pValue) {
 
@@ -130,28 +175,6 @@ public class FrcLoggerListener implements NetworkListener, NetworkAdditionListen
 			this.error("valueConfirmed()", anEx);
 		}
 	}
-
-	protected void debug(final String pMethod, final String pMessage) {
-		System.err.println(this.getClassName() + " " + pMethod + " " + pMessage);
-	}
-
-	private void error(final String pMethod, final Exception anEx) {
-		this.error(
-				pMethod,
-				"Caught " + anEx.getClass().getName() + ", with message=" + anEx.getMessage() + ".",
-				anEx);
-	}
-
-	private void error(final String pMethod, final String pMessage, final Exception anEx) {
-		System.err.println(this.getClassName() + " " + pMethod + " " + pMessage);
-		if (null != anEx) {
-			anEx.printStackTrace();
-		}
-	}
-
-	private String getClassName() {
-		final String aClassName = this.getClass().getName();
-		return aClassName.substring(aClassName.lastIndexOf('.') + 1);
-	}
+	*/
 
 }
